@@ -196,3 +196,44 @@ func TestPlural(t *testing.T) {
 		assert.Equal(t, tt.out, out)
 	}
 }
+
+var expandPlaceholderTests = []struct {
+	in         string
+	expensions map[string]string
+	out        string
+}{
+	{"{}", map[string]string{"match": "a/b"}, "a/b"},
+	{"{file}", map[string]string{"file": "a/b"}, "a/b"},
+	{"{dot|underscore}", map[string]string{"match": "a/b"}, "a.b"},
+	{"{dot|uppercase}", map[string]string{"match": "a/b"}, "A.B"},
+	{"{dirname}", map[string]string{"match": "a/b"}, "a"},
+}
+
+func TestExpandPlaceholder(t *testing.T) {
+	for _, tt := range expandPlaceholderTests {
+		out := ExpandPlaceholder(tt.in, tt.expensions)
+		assert.Equal(t, tt.out, out)
+	}
+}
+
+func TestExpandPlaceholderPanics(t *testing.T) {
+	assert.Panics(t, func() { ExpandPlaceholder("", nil) })
+	assert.Panics(t, func() { ExpandPlaceholder("{}", map[string]string{}) })
+}
+
+var expandPlaceholdersTests = []struct {
+	in, out    string
+	expansions map[string]string
+}{
+	{"{dirname|dot}/{basename}", "a.b/c", map[string]string{"match": "a/b/c"}},
+	{"prefix-{dirname|dot}/{basename}", "prefix-a.b/c", map[string]string{"match": "a/b/c"}},
+	{"{dirname|dot}/{basename}-suffix", "a.b/c-suffix", map[string]string{"match": "a/b/c"}},
+}
+
+func TestExpandPlaceholders(t *testing.T) {
+	for _, tt := range expandPlaceholdersTests {
+		out, err := ExpandPlaceholders(tt.in, tt.expansions)
+		assert.Nil(t, err, "Should not have returned an error")
+		assert.Equal(t, tt.out, out)
+	}
+}

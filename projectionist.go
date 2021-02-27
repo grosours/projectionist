@@ -1,6 +1,7 @@
 package proj
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -271,4 +272,67 @@ func Close(s string) string {
 
 func Nothing(s string) string {
 	return ""
+}
+
+var transformFuncs = map[string]func(s string) string{
+	"dot":        Dot,
+	"underscore": Underscore,
+	"backslash":  Backslash,
+	"colons":     Colons,
+	"hyphenate":  Hyphenate,
+	"blank":      Blank,
+	"uppercase":  UpperCase,
+	"camelcase":  CamelCase,
+	"snakecase":  SnakeCase,
+	"capitalize": Capitalize,
+	"dirname":    Dirname,
+	"basename":   Basename,
+	"singular":   Singular,
+	"plural":     Plural,
+	"open":       Open,
+	"Close":      Close,
+	"nothing":    Nothing,
+}
+var placeholderPattern *regexp.Regexp
+
+func init() {
+	placeholderPattern = regexp.MustCompile("{[^{}]*}")
+}
+
+func ExpandPlaceholder(h string, expansions map[string]string) string {
+	if len(h) < 2 || h[0] != '{' || h[len(h)-1] != '}' {
+		panic(fmt.Sprintf("%s do not look like a placeholder", h))
+	}
+	transforms := strings.Split(h[1:len(h)-1], "|")
+	var value, exists = expansions[transforms[0]]
+	if !exists {
+		value, exists = expansions["match"]
+		if !exists {
+			panic("no matches in expensions")
+		}
+	} else {
+		transforms = transforms[1:]
+	}
+
+	for _, t := range transforms {
+		f, exists := transformFuncs[t]
+		if exists {
+			value = f(value)
+		}
+	}
+
+	return value
+}
+
+func ExpandPlaceholders(pattern string, expansions map[string]string) (string, error) {
+	var b strings.Builder
+
+	start := 0
+	for _, m := range placeholderPattern.FindAllStringIndex(pattern, -1) {
+		b.WriteString(pattern[start:m[0]])
+		b.WriteString(ExpandPlaceholder(pattern[m[0]:m[1]], expansions))
+		start = m[1]
+	}
+	b.WriteString(pattern[start:])
+	return b.String(), nil
 }
