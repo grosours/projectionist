@@ -114,6 +114,7 @@ var matchesTest = []struct {
 	{"**/*.a", "bla.c", "", false},
 	{"coucou/**/test_*.c", "coucou/bla/test_bli.c", "bla/bli", true},
 	{"coucou/**test_*.c", "coucou/bla/test_bli.c", "bla/bli", true},
+	{"b", "b", "", true},
 }
 
 func TestMatches(t *testing.T) {
@@ -234,6 +235,170 @@ func TestExpandPlaceholders(t *testing.T) {
 	for _, tt := range expandPlaceholdersTests {
 		out, err := ExpandPlaceholders(tt.in, tt.expansions)
 		assert.Nil(t, err, "Should not have returned an error")
+		assert.Equal(t, tt.out, out)
+	}
+}
+
+func TestQueryRaw(t *testing.T) {
+	var projections = Projections(map[string]Projection{
+		"/": Projection(map[string]Props{
+			"*": Props(map[string]string{
+				"key1": "root1",
+				"key2": "root2",
+			}),
+		}),
+		"/a": Projection(map[string]Props{
+			"*": Props(map[string]string{
+				"key1": "a1",
+			}),
+			"b": Props(map[string]string{
+				"key1": "b1",
+			}),
+		}),
+	})
+
+	for _, tt := range []struct {
+		key, file   string
+		projections Projections
+		values      []string
+	}{
+		{"key1", "/a/c", projections, []string{"a1", "root1"}},
+		{"key1", "/a/b", projections, []string{"b1", "a1", "root1"}},
+		{"key2", "/a/d", projections, []string{"root2"}},
+		{"key2", "/b/d", projections, []string{"root2"}},
+		{"key3", "/a/c", projections, []string{}},
+	} {
+		t.Log(tt)
+		results := QueryRaw(tt.key, tt.file, tt.projections)
+		values := make([]string, len(results))
+		for i, r := range results {
+			values[i] = r.Value
+		}
+		assert.Equal(t, tt.values, values)
+	}
+}
+
+func TestCompPatt(t *testing.T) {
+	for _, tt := range []struct {
+		a, b  string
+		count int
+	}{
+		{"a", "a", 0},
+		{"a/**/*.c", "b/**/*.c", 1},
+		{"a/**/*.c", "b/**/c/*.d", 1},
+		{"a", "a/b", 1},
+		{"*", "a", 1},
+		{"a/*", "**/a", 1},
+		{"a/**/*.c", "a", 1},
+		{"a/**/*.c", "a/**/b", 1},
+		{"a/**/*.c", "a/*.c", 0},
+	} {
+		t.Log(tt)
+		count := compPatt(tt.a, tt.b)
+		if tt.count == 0 {
+			assert.Equal(t, tt.count, count)
+		} else {
+			assert.Greater(t, tt.count*count, 0, "Should be the same signs")
+		}
+	}
+}
+
+func TestPathSplit(t *testing.T) {
+	for _, tt := range []struct {
+		in  string
+		out []string
+	}{
+		{"a", []string{"a"}},
+		{"a/b", []string{"a", "b"}},
+		{"/", []string{"/"}},
+		{"/*/a", []string{"/", "*", "a"}},
+		{"a/", []string{"a"}},
+	} {
+		out := pathSplit(tt.in)
+		t.Log(tt)
+		assert.Equal(t, tt.out, out)
+	}
+}
+
+func TestQuery(t *testing.T) {
+	var projections = Projections(map[string]Projection{
+		"/": Projection(map[string]Props{
+			"*": Props(map[string]string{
+				"key1": "{}",
+			}),
+			"b": Props(map[string]string{
+				"key1": "b1",
+			}),
+		}),
+	})
+
+	for _, tt := range []struct {
+		key, file string
+		out       [][2]string
+	}{
+		{"key1", "/a", [][2]string{{"/", "a"}}},
+		{"key1", "/b", [][2]string{{"/", "b1"}, {"/", "b"}}},
+	} {
+		t.Log(tt)
+		out := Query(tt.key, tt.file, projections)
+		assert.Equal(t, tt.out, out)
+	}
+}
+
+func TestQueryFile(t *testing.T) {
+	var projections = Projections(map[string]Projection{
+		"/": Projection(map[string]Props{
+			"*": Props(map[string]string{
+				"key1": "{}",
+			}),
+			"b": Props(map[string]string{
+				"key1": "b1",
+			}),
+		}),
+	})
+
+	for _, tt := range []struct {
+		key, file string
+		out       []string
+	}{
+		{"key1", "/a", []string{"/a"}},
+		{"key1", "/b", []string{"/b1", "/b"}},
+	} {
+		t.Log(tt)
+		out := QueryFile(tt.key, tt.file, projections)
+		assert.Equal(t, tt.out, out)
+	}
+}
+
+func TestQueryFileRec(t *testing.T) {
+	var projections = Projections(map[string]Projection{
+		"/": Projection(map[string]Props{
+			"*": Props(map[string]string{
+				"key1": "{}",
+			}),
+			"b": Props(map[string]string{
+				"key1": "b1",
+			}),
+			"b1": Props(map[string]string{
+				"key1": "b2",
+			}),
+			"b2": Props(map[string]string{
+				"key1": "b3",
+			}),
+		}),
+	})
+
+	for _, tt := range []struct {
+		key, file string
+		rec       int
+		out       []string
+	}{
+		{"key1", "/a", 10, []string{"/a"}},
+		{"key1", "/b", 10, []string{"/b1", "/b", "/b2", "/b3"}},
+		{"key1", "/b", 1, []string{"/b1", "/b"}},
+	} {
+		t.Log(tt)
+		out := QueryFileRec(tt.key, tt.file, tt.rec, projections)
 		assert.Equal(t, tt.out, out)
 	}
 }

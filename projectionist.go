@@ -5,7 +5,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -14,6 +16,7 @@ var ProjectionFile = ".projections.json"
 
 type Props map[string]string
 type Projection map[string]Props
+type Projections map[string]Projection
 
 func Project(filename string) Props {
 	return Props(map[string]string{})
@@ -335,4 +338,169 @@ func ExpandPlaceholders(pattern string, expansions map[string]string) (string, e
 	}
 	b.WriteString(pattern[start:])
 	return b.String(), nil
+}
+
+type RawResult struct {
+	Value      string
+	Expansions map[string]string
+}
+
+func pathSplit(p string) []string {
+	var comp = []string{}
+	p = path.Clean(p)
+	for {
+		d, f := path.Split(p)
+		if f != "" {
+			comp = append(comp, f)
+		}
+		if d == "/" {
+			comp = append(comp, d)
+			break
+		}
+		if d == "" {
+			break
+		}
+		p = path.Clean(d)
+	}
+	rev := make([]string, len(comp))
+	for i, c := range comp {
+		rev[len(comp)-1-i] = c
+	}
+	return rev
+}
+
+func compPatt(a, b string) int {
+	a, b = normPatt(a), normPatt(b)
+	aWild := strings.Count(a, "*")
+	bWild := strings.Count(b, "*")
+	x := aWild - bWild
+	if x != 0 {
+		return x
+	}
+	aSlashes := strings.Count(a, "/")
+	bSlashes := strings.Count(b, "/")
+	x = bSlashes - aSlashes
+	if x != 0 {
+		return x
+	}
+	return strings.Compare(b, a)
+}
+
+func sorted(m interface{}, f func(a, b string) int, reverse bool) []string {
+	mm := reflect.ValueOf(m)
+	kks := make([]string, 0, mm.Len())
+	sign := 1
+	if reverse {
+		sign = -1
+	}
+	it := mm.MapRange()
+	for it.Next() {
+		k := it.Key().Interface().(string)
+		i := sort.Search(len(kks), func(j int) bool {
+			return (sign * f(kks[j], k)) <= 0
+		})
+		kks = kks[:len(kks)+1]
+		for j := len(kks) - 1; j > i; j-- {
+			kks[j] = kks[j-1]
+		}
+		kks[i] = k
+	}
+	return kks
+}
+
+func QueryRaw(key, file string, projections Projections) []RawResult {
+	var candidates = []RawResult{}
+
+	for _, path := range sorted(projections, compPatt, true) {
+		expansions := map[string]string{
+			"project": path,
+			"file":    file,
+		}
+		name := ""
+		if len(file) >= len(path) && file[:len(path)] == path {
+			name = file[len(path):]
+		} else {
+			continue
+		}
+		if name[0] == '/' {
+			name = name[1:]
+		}
+		projection := projections[path]
+		for _, pattern := range sorted(projection, compPatt, true) {
+			props := projection[pattern]
+			if match, doesMatch := matches(pattern, name); doesMatch {
+				if value, ok := props[key]; ok {
+					exp := make(map[string]string)
+					for k, v := range expansions {
+						exp[k] = v
+					}
+					exp["match"] = match
+					candidates = append(candidates, RawResult{value, exp})
+				}
+			}
+		}
+	}
+
+	return candidates
+}
+
+func Query(key, file string, projections Projections) [][2]string {
+	raw := QueryRaw(key, file, projections)
+	var candidates = make([][2]string, 0, len(raw))
+	for _, r := range raw {
+		value, err := ExpandPlaceholders(r.Value, r.Expansions)
+		project, ok := r.Expansions["project"]
+		if err == nil && ok {
+			rr := [2]string{project, value}
+			candidates = append(candidates, rr)
+		}
+	}
+	return candidates
+}
+
+func QueryFile(key, file string, projections Projections) []string {
+	qqs := Query(key, file, projections)
+	rrs := make([]string, 0, len(qqs))
+	for _, q := range qqs {
+		full := path.Join(q[0], q[1])
+		rrs = append(rrs, full)
+	}
+	return rrs
+}
+
+func QueryFileRec(key, file string, rec int, projections Projections) []string {
+	depth := 0
+	files := []string{}
+	currentFiles := []string{file}
+	visited := map[string]bool{}
+
+	for {
+		if len(currentFiles) == 0 || depth >= rec {
+			break
+		}
+		nextFiles := []string{}
+		for _, file := range currentFiles {
+			candidates := QueryFile(key, file, projections)
+			for _, c := range candidates {
+				if !visited[c] {
+					visited[c] = true
+					files = append(files, c)
+					nextFiles = append(nextFiles, c)
+				}
+			}
+		}
+		currentFiles = nextFiles
+		depth++
+	}
+
+	return files
+}
+
+func QueryScalar(key, file string, projections Projections) []string {
+	qqs := Query(key, file, projections)
+	rrs := make([]string, 0, len(qqs))
+	for _, c := range qqs {
+		rrs = append(rrs, c[1])
+	}
+	return rrs
 }
