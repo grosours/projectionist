@@ -26,13 +26,21 @@ func init() {
 	loneStar = regexp.MustCompile(`^[^*{}]*\*[^*{}]*$`)
 }
 
-func matches(pattern, filename string) (string, bool) {
-	if loneStar.MatchString(pattern) {
-		pattern = strings.Replace(pattern, "*", "**/*", 1)
+func normPatt(patt string) string {
+	if loneStar.MatchString(patt) {
+		patt = strings.Replace(patt, "*", "**/*", 1)
 	}
+	return patt
+}
+
+func matches(pattern, filename string) (string, bool) {
+	pattern = normPatt(pattern)
 	comp := matchSplit.Split(pattern, -1)
+	if len(comp) == 1 {
+		return "", pattern == filename
+	}
 	if len(comp) != 3 {
-		panic("Should have splet the path in 3")
+		panic(fmt.Sprintf("%s: Should have splet the path in 3: %#v", pattern, comp))
 	}
 	if !strings.HasPrefix(filename, comp[0]) || !strings.HasSuffix(filename, comp[2]) {
 		return "", false
